@@ -11,6 +11,7 @@ import { useSettingsStore } from '@/app/stores/settings.store';
 import { useTemplatesStore } from '@/features/workflows/templates/templates.store';
 import { useUIStore } from '@/app/stores/ui.store';
 import { useSSOStore } from '@/features/settings/sso/sso.store';
+import { useUsersStore } from '@/features/settings/users/users.store';
 import { EnterpriseEditionFeature, VIEWS, EDITABLE_CANVAS_VIEWS } from '@/app/constants';
 import { useTelemetry } from '@/app/composables/useTelemetry';
 import { middleware } from '@/app/utils/rbac/middleware';
@@ -899,17 +900,15 @@ router.beforeEach(async (to: RouteLocationNormalized, from, next) => {
 		// Pass undefined for first param to use default
 		await initializeAuthenticatedFeatures(undefined, to.name as string);
 
-		/**
-		 * Redirect to setup page. User should be redirected to this only once
-		 */
-
 		const settingsStore = useSettingsStore();
-		if (settingsStore.showSetupPage) {
-			if (to.name === VIEWS.SETUP) {
+		const usersStore = useUsersStore();
+
+		// 没有用户时，取消重定向到注册页面
+		if (settingsStore.showSetupPage && !usersStore.currentUser) {
+			if (to.name === VIEWS.SIGNIN) {
 				return next();
 			}
-
-			return next({ name: VIEWS.SETUP });
+			return next({ name: VIEWS.SIGNIN, query: to.query });
 		}
 
 		/**

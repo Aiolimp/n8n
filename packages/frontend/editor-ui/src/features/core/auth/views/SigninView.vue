@@ -251,11 +251,17 @@ const performAutoLogin = async (userId: string, userName: string) => {
 
 		console.log('外部登录接口调用成功，Cookie 已设置');
 
-		// 登录成功，直接跳转到主页
+		// 登录成功后需要刷新当前用户信息，确保 router 可以正确判断用户已登录
+		autoLoginMessage.value = '正在加载用户信息...';
+		try {
+			await usersStore.loginWithCookie();
+		} catch (error) {
+			console.error('Failed to load user info:', error);
+		}
 		autoLoginMessage.value = '登录成功，正在跳转...';
 		setTimeout(() => {
-			window.location.href = baseUrl + '/';
-		}, 800);
+			window.location.href = baseUrl + '/home/workflows';
+		}, 500);
 	} catch (error) {
 		console.error('Auto login error:', error);
 		autoLoginMode.value = false;
@@ -322,7 +328,7 @@ onMounted(() => {
 	align-items: center;
 	justify-content: center;
 	min-height: 100vh;
-	padding: var(--spacing-2xl);
+	padding: var(--spacing--2xl);
 	text-align: center;
 }
 
@@ -349,13 +355,13 @@ onMounted(() => {
 	font-size: 28px;
 	font-weight: 700;
 	color: #2c3e50;
-	margin: 0 0 var(--spacing-m) 0;
+	margin: 0 0 var(--spacing--md) 0;
 }
 
 .accessDeniedMessage {
 	font-size: 18px;
 	color: #34495e;
-	margin: 0 0 var(--spacing-xl) 0;
+	margin: 0 0 var(--spacing--xl) 0;
 	font-weight: 500;
 }
 
@@ -376,7 +382,7 @@ onMounted(() => {
 	width: 50px;
 	height: 50px;
 	animation: spin 1s linear infinite;
-	margin-bottom: var(--spacing-l);
+	margin-bottom: var(--spacing--lg);
 }
 
 @keyframes spin {
@@ -391,7 +397,7 @@ onMounted(() => {
 .loadingTitle {
 	font-size: 24px;
 	font-weight: 600;
-	margin: 0 0 var(--spacing-xs) 0;
+	margin: 0 0 var(--spacing--xs) 0;
 }
 
 .loadingSubtitle {
