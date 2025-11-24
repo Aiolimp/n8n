@@ -76,11 +76,8 @@ export class ExternalAuthController {
 		// 8. 签发 JWT Token
 		const token = this.authService.issueJWT(user, false, req.browserId);
 
-		// 9. 根据环境配置 Cookie 选项
-		const isProduction = process.env.NODE_ENV === 'production';
-		const cookieOptions = isProduction
-			? 'HttpOnly; SameSite=None; Secure; Max-Age=604800; Path=/'
-			: 'HttpOnly; SameSite=Lax; Max-Age=604800; Path=/';
+		// 9. 设置认证 Cookie
+		const cookieOptions = 'HttpOnly; SameSite=Lax; Max-Age=604800; Path=/';
 
 		// 10. 设置认证 Cookie
 		res.setHeader('Set-Cookie', `n8n-auth=${token}; ${cookieOptions}`);
