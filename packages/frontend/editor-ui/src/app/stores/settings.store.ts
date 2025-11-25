@@ -202,16 +202,16 @@ export const useSettingsStore = defineStore(STORES.SETTINGS, () => {
 			useRootStore().setVersionCli(settings.value.versionCli);
 		}
 
-		if (settings.value.authCookie.secure) {
-			const { browser } = Bowser.parse(navigator.userAgent);
-			if (
-				location.protocol === 'http:' &&
-				(!['localhost', '127.0.0.1'].includes(location.hostname) || browser.name === 'Safari')
-			) {
-				document.write(INSECURE_CONNECTION_WARNING);
-				return;
-			}
-		}
+		// if (settings.value.authCookie.secure) {
+		// 	const { browser } = Bowser.parse(navigator.userAgent);
+		// 	if (
+		// 		location.protocol === 'http:' &&
+		// 		(!['localhost', '127.0.0.1'].includes(location.hostname) || browser.name === 'Safari')
+		// 	) {
+		// 		document.write(INSECURE_CONNECTION_WARNING);
+		// 		return;
+		// 	}
+		// }
 	};
 
 	const setAllowedModules = (allowedModules: FrontendSettings['allowedModules']) => {
