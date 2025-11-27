@@ -235,6 +235,16 @@ function registerAuthenticationHooks() {
 		npsSurveyStore.setupNpsSurveyOnLogin(user.id, user.settings);
 		void settingsStore.getModuleSettings();
 		void bannersStore.loadDynamicBanners();
+
+		// 启动后台系统 token 轮询验证（如果存在 token）
+		const backendToken = sessionStorage.getItem('backend_token');
+		if (backendToken) {
+			const { useBackendTokenValidation } = await import(
+				'@/app/composables/useBackendTokenValidation'
+			);
+			const tokenValidation = useBackendTokenValidation();
+			tokenValidation.startPolling(backendToken);
+		}
 	});
 
 	usersStore.registerLogoutHook(() => {
@@ -244,5 +254,7 @@ function registerAuthenticationHooks() {
 		cloudPlanStore.reset();
 		telemetry.reset();
 		RBACStore.setGlobalScopes([]);
+		// 清除后台系统 token
+		sessionStorage.removeItem('backend_token');
 	});
 }

@@ -206,24 +206,55 @@ const cacheCredentials = (form: EmailOrLdapLoginIdAndPassword) => {
 };
 
 // 自动登录功能
-const performAutoLogin = async (userId: string, userName: string) => {
+const performAutoLogin = async (userId: string, userName: string, token: string) => {
 	try {
 		autoLoginMode.value = true;
 		loading.value = true;
 		autoLoginMessage.value = '正在验证用户信息...';
-		// 获取认证密钥（从环境变量或配置中读取）
-		const authSecret = import.meta.env.VITE_N8N_EXTERNAL_AUTH_SECRET || 'n8n-secret-key-2025';
+
 		const baseUrl = window.location.origin;
-		// 注意：登出逻辑在 guest 中间件中处理
+		const authSecret = import.meta.env.VITE_N8N_EXTERNAL_AUTH_SECRET || 'n8n-secret-key-2025';
+
+		// 1. 使用 token 调用 n8n 后端代理接口验证用户信息（避免跨域问题）
+		const verifyResponse = await fetch(`${baseUrl}/rest/external-auth/verify-backend-token`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({ token }),
+		});
+
+		if (!verifyResponse.ok) {
+			throw new Error('后台系统验证失败：无效的 token');
+		}
+		const verifyResponse_json = await verifyResponse.json();
+
+		// 处理可能的嵌套 data 结构
+		let verifyData = verifyResponse_json.data;
+		if (verifyData && verifyData.data) {
+			verifyData = verifyData.data;
+		}
+		console.log('verifyData', verifyData);
+		// 2. 验证返回的用户信息是否与 URL 参数一致
+		if (!verifyData || !verifyData.id || !verifyData.user_name) {
+			throw new Error('后台系统返回的用户信息不完整');
+		}
+		if (verifyData.id !== userId) {
+			throw new Error('用户 ID 验证失败：URL 参数与后台系统不一致');
+		}
+		if (userName && verifyData.user_name !== userName) {
+			throw new Error('用户名验证失败：URL 参数与后台系统不一致');
+		}
+
+		// 3. 验证通过后，初始化 n8n 用户
 		autoLoginMessage.value = '正在初始化用户...';
-		// 处理用户名称：如果提供了 userName，使用它；否则使用默认值
 		const createResponse = await fetch(`${baseUrl}/rest/external-auth/create-user`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				userId: userId,
-				firstName: userName && userName.trim() ? userName.trim() : 'User',
-				lastName: userId.substring(0, 8),
+				firstName: userName,
+				lastName: '',
 				authSecret: authSecret,
 			}),
 		});
@@ -232,7 +263,7 @@ const performAutoLogin = async (userId: string, userName: string) => {
 			throw new Error('用户初始化失败');
 		}
 
-		// 调用外部登录接口
+		// 4. 调用 n8n 登录接口
 		autoLoginMessage.value = '正在登录...';
 		const loginResponse = await fetch(`${baseUrl}/rest/external-auth/login`, {
 			method: 'POST',
@@ -249,38 +280,71 @@ const performAutoLogin = async (userId: string, userName: string) => {
 			throw new Error(error.message || '登录失败');
 		}
 
-		console.log('外部登录接口调用成功，Cookie 已设置');
+		// 5. 先保存 token 到 sessionStorage（在 loginWithCookie 之前，确保 loginHook 能获取到正确的 token）
+		if (token) {
+			sessionStorage.setItem('backend_token', token);
+		}
 
-		// 登录成功后需要刷新当前用户信息，确保 router 可以正确判断用户已登录
+		// 6. 加载用户信息到 store（会触发 loginHook，启动 token 轮询）
 		autoLoginMessage.value = '正在加载用户信息...';
 		try {
 			await usersStore.loginWithCookie();
 		} catch (error) {
-			console.error('Failed to load user info:', error);
+			throw new Error('登录失败：无法加载用户信息');
 		}
+
+		// 7. 登录成功，跳转到工作流页面
 		autoLoginMessage.value = '登录成功，正在跳转...';
-		setTimeout(() => {
-			window.location.href = baseUrl + '/home/workflows';
+		await settingsStore.getSettings();
+
+		setTimeout(async () => {
+			await router.push('/home/workflows');
 		}, 500);
 	} catch (error) {
-		console.error('Auto login error:', error);
 		autoLoginMode.value = false;
 		loading.value = false;
-		toast.showError(error as Error, '自动登录失败，请手动登录');
+		accessDenied.value = true;
+		accessDeniedMessage.value = `登录失败: ${error instanceof Error ? error.message : String(error)}`;
 	}
 };
 
-// 在组件挂载时检查是否有 userId 参数
+// 在组件挂载时检查是否有 userId 和 token 参数
 onMounted(() => {
+	// 0. 清除旧的 backend_token（避免干扰新的登录流程）
+	const hasAutoLoginParams = route.query.userId && route.query.token;
+	if (hasAutoLoginParams) {
+		sessionStorage.removeItem('backend_token');
+	}
+
+	// 1. 检查是否是因为 token 失效而被登出
+	const tokenExpired = sessionStorage.getItem('token_expired');
+	if (tokenExpired === 'true') {
+		sessionStorage.removeItem('token_expired');
+		// 显示访问受限页面
+		accessDenied.value = true;
+		accessDeniedMessage.value = '会话已过期，请重新登录';
+		autoLoginMode.value = false;
+		loading.value = false;
+		return;
+	}
+
+	// 2. 检查是否携带了自动登录参数
 	const userId = route.query.userId as string;
 	const userName = route.query.userName as string;
+	const token = route.query.token as string;
 
-	// 检查是否携带了必需的 userId 参数
-	if (userId && typeof userId === 'string' && userId.trim()) {
-		// 有参数，执行自动登录
-		void performAutoLogin(userId.trim(), userName);
+	// 必须同时有 userId 和 token 才执行自动登录
+	if (
+		userId &&
+		typeof userId === 'string' &&
+		userId.trim() &&
+		token &&
+		typeof token === 'string' &&
+		token.trim()
+	) {
+		void performAutoLogin(userId.trim(), userName?.trim() || '', token.trim());
 	} else {
-		// 没有参数，拒绝访问
+		// 缺少必需参数，显示默认登录表单
 		accessDenied.value = true;
 		autoLoginMode.value = false;
 		loading.value = false;
@@ -292,14 +356,25 @@ onMounted(() => {
 	<div>
 		<!-- 访问被拒绝页面 -->
 		<div v-if="accessDenied" :class="$style.accessDeniedContainer">
+			<h1 :class="$style.accessDeniedTitle">访问受限</h1>
 			<p :class="$style.accessDeniedMessage">{{ accessDeniedMessage }}</p>
+			<div :class="$style.decorationLine"></div>
 		</div>
 
 		<!-- 自动登录 Loading 页面 -->
 		<div v-else-if="autoLoginMode" :class="$style.autoLoginContainer">
-			<div :class="$style.loadingSpinner"></div>
-			<h2 :class="$style.loadingTitle">{{ autoLoginMessage }}</h2>
-			<p :class="$style.loadingSubtitle">请稍候，即将自动跳转...</p>
+			<div :class="$style.loaderContent">
+				<div :class="$style.modernSpinner">
+					<div :class="$style.spinnerInner"></div>
+					<div :class="$style.spinnerOuter"></div>
+				</div>
+				<h2 :class="$style.loadingTitle">{{ autoLoginMessage }}</h2>
+				<p :class="$style.loadingSubtitle">
+					<span :class="$style.dot">.</span>
+					<span :class="$style.dot">.</span>
+					<span :class="$style.dot">.</span>
+				</p>
+			</div>
 		</div>
 
 		<!-- 禁用原有的登录表单-->
@@ -323,66 +398,108 @@ onMounted(() => {
 
 <style lang="scss" module>
 .accessDeniedContainer {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100vh;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	min-height: 100vh;
-	padding: var(--spacing--2xl);
-	text-align: center;
-}
-
-.warningIcon {
-	width: 80px;
-	height: 80px;
-	color: #ff6b6b;
-	animation: pulse 2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-	0%,
-	100% {
-		opacity: 1;
-		transform: scale(1);
-	}
-	50% {
-		opacity: 0.8;
-		transform: scale(1.05);
-	}
+	z-index: 9999;
 }
 
 .accessDeniedTitle {
 	font-size: 28px;
 	font-weight: 700;
-	color: #2c3e50;
-	margin: 0 0 var(--spacing--md) 0;
+	margin: 0 0 16px;
 }
 
 .accessDeniedMessage {
-	font-size: 18px;
-	color: #34495e;
-	margin: 0 0 var(--spacing--xl) 0;
-	font-weight: 500;
+	font-size: 16px;
+	color: #333333;
+	margin-bottom: 24px;
 }
 
-// 自动登录样式
+/* 自动登录页面 - 科技感风格 */
 .autoLoginContainer {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100vh;
 	display: flex;
-	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	min-height: 100vh;
-	color: 333333;
+	background: #ffffff;
+	z-index: 9999;
 }
 
-.loadingSpinner {
-	border: 4px solid rgba(255, 255, 255, 0.3);
+.loaderContent {
+	text-align: center;
+	position: relative;
+	z-index: 2;
+}
+
+.modernSpinner {
+	position: relative;
+	width: 80px;
+	height: 80px;
+	margin: 0 auto 30px;
+}
+
+.spinnerOuter {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	border: 3px solid transparent;
+	border-top-color: #ff6b6b;
+	border-right-color: #ff6b6b;
 	border-radius: 50%;
-	border-top: 4px solid white;
+	animation: spin 1.2s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite;
+}
+
+.spinnerInner {
+	position: absolute;
+	top: 15px;
+	left: 15px;
 	width: 50px;
 	height: 50px;
-	animation: spin 1s linear infinite;
-	margin-bottom: var(--spacing--lg);
+	border: 3px solid transparent;
+	border-bottom-color: #4ecdc4;
+	border-left-color: #4ecdc4;
+	border-radius: 50%;
+	animation: spinReverse 1.5s linear infinite;
+}
+
+.loadingTitle {
+	font-size: 24px;
+	font-weight: 600;
+	color: #2d3436;
+	margin-bottom: 12px;
+	letter-spacing: 0.5px;
+}
+
+.loadingSubtitle {
+	font-size: 14px;
+	color: #636e72;
+	display: flex;
+	justify-content: center;
+	gap: 4px;
+}
+
+.dot {
+	animation: bounce 1.4s infinite ease-in-out both;
+}
+
+.dot:nth-child(1) {
+	animation-delay: -0.32s;
+}
+.dot:nth-child(2) {
+	animation-delay: -0.16s;
 }
 
 @keyframes spin {
@@ -394,15 +511,49 @@ onMounted(() => {
 	}
 }
 
-.loadingTitle {
-	font-size: 24px;
-	font-weight: 600;
-	margin: 0 0 var(--spacing--xs) 0;
+@keyframes spinReverse {
+	0% {
+		transform: rotate(0deg);
+	}
+	100% {
+		transform: rotate(-360deg);
+	}
 }
 
-.loadingSubtitle {
-	font-size: 14px;
-	opacity: 0.9;
-	margin: 0;
+@keyframes pulse {
+	0% {
+		transform: scale(1);
+		opacity: 1;
+	}
+	50% {
+		transform: scale(1.1);
+		opacity: 0.8;
+	}
+	100% {
+		transform: scale(1);
+		opacity: 1;
+	}
+}
+
+@keyframes slideUp {
+	from {
+		transform: translateY(20px);
+		opacity: 0;
+	}
+	to {
+		transform: translateY(0);
+		opacity: 1;
+	}
+}
+
+@keyframes bounce {
+	0%,
+	80%,
+	100% {
+		transform: scale(0);
+	}
+	40% {
+		transform: scale(1);
+	}
 }
 </style>

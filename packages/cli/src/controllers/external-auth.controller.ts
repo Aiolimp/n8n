@@ -1,4 +1,3 @@
-import { Logger } from '@n8n/backend-common';
 import {
 	UserRepository,
 	RoleRepository,
@@ -23,7 +22,6 @@ import { NotFoundError } from '@/errors/response-errors/not-found.error';
 @RestController('/external-auth')
 export class ExternalAuthController {
 	constructor(
-		private readonly logger: Logger,
 		private readonly userRepository: UserRepository,
 		private readonly roleRepository: RoleRepository,
 		private readonly projectRepository: ProjectRepository,
@@ -129,9 +127,15 @@ export class ExternalAuthController {
 
 		// 6. 如果用户已存在，直接返回成功
 		if (existingUser) {
+			const userWithRole = await this.userRepository.findOne({
+				where: { email: emailAddress },
+				relations: ['role'],
+			});
+
 			return {
 				success: true,
 				message: 'User already exists',
+				role: userWithRole?.role?.slug || 'unknown',
 				user: {
 					id: existingUser.id,
 					email: existingUser.email,
@@ -148,47 +152,46 @@ export class ExternalAuthController {
 			password: await this.hashDummyPassword(),
 		});
 
-		// 8. 获取全局成员角色
-		const memberRole = await this.roleRepository.findOne({
-			where: { slug: 'global:member' },
-		});
+		// 8. 分配角色（所有新增用户都是管理员）
+		const roleSlug = 'global:owner';
+		const userRole = await this.roleRepository.findOne({ where: { slug: roleSlug } });
 
-		// 9. 为用户分配成员角色
-		if (memberRole) {
-			newUser.role = memberRole;
+		if (userRole) {
+			newUser.role = userRole;
 		}
 
-		// 10. 保存用户到数据库
+		// 11. 保存用户到数据库
 		const savedUser = await this.userRepository.save(newUser);
 
-		// 11. 生成个人项目ID和名称
+		// 12. 生成个人项目ID和名称
 		const projectId = generateNanoId();
 		const projectName = savedUser.createPersonalProjectName();
 
-		// 12. 创建个人项目
+		// 13. 创建个人项目
 		const personalProject = this.projectRepository.create({
 			id: projectId,
 			type: 'personal',
 			name: projectName,
 		});
 
-		// 13. 保存个人项目到数据库
+		// 14. 保存个人项目到数据库
 		await this.projectRepository.save(personalProject);
 
-		// 14. 创建项目关联关系（用户作为项目所有者）
+		// 15. 创建项目关联关系（用户作为项目所有者）
 		const projectRelation = this.projectRelationRepository.create({
 			projectId: projectId,
 			userId: savedUser.id,
 			role: { slug: PROJECT_OWNER_ROLE_SLUG },
 		});
 
-		// 15. 保存项目关联关系
+		// 16. 保存项目关联关系
 		await this.projectRelationRepository.save(projectRelation);
 
 		// 16. 返回创建成功响应
 		return {
 			success: true,
-			message: 'User created successfully',
+			message: 'User created successfully as owner',
+			role: roleSlug,
 			user: {
 				id: savedUser.id,
 				email: savedUser.email,
@@ -329,6 +332,102 @@ export class ExternalAuthController {
 	}
 
 	/**
+	 * 验证后台系统 Token 接口 - 代理调用后台系统的 token 验证接口（解决跨域问题）
+	 */
+	@Post('/verify-backend-token', { skipAuth: true })
+	async verifyBackendToken(req: AuthlessRequest, _res: Response) {
+		// 1. 获取请求参数：token
+		const payload = req.body as { token?: string };
+		const { token } = payload;
+
+		// 2. 检查 token 是否存在
+		if (!token) {
+			throw new BadRequestError('token is required');
+		}
+
+		// 3. 调用后台系统的 token 验证接口
+		// 测试模式：如果设置了 USE_MOCK_BACKEND=true，则使用本地模拟接口
+		let verifyUrl: string;
+		if (process.env.USE_MOCK_BACKEND === 'true') {
+			// 使用本地模拟接口
+			const baseUrl = `http://localhost:${process.env.N8N_PORT || 5678}`;
+			verifyUrl = `${baseUrl}/rest/external-auth/mock-sirius-token-verify`;
+		} else {
+			// 生产模式：优先使用环境变量，如果没有配置则使用浏览器访问的 IP 地址
+			let backendSystemUrl = process.env.BACKEND_SYSTEM_URL;
+			if (!backendSystemUrl) {
+				// 从请求头中获取浏览器访问的主机名（不含端口）
+				const hostname = req.hostname || req.get('host')?.split(':')[0] || 'localhost';
+				backendSystemUrl = `http://${hostname}`;
+			}
+			verifyUrl = `${backendSystemUrl}/gx/sirius/api/v2/users/meta/desc/token`;
+		}
+
+		try {
+			const response = await fetch(verifyUrl, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({ token }),
+			});
+
+			if (!response.ok) {
+				throw new AuthError(`Backend system verification failed: ${response.statusText}`);
+			}
+
+			const responseData = await response.json();
+
+			// 4. 返回后台系统的验证结果
+			// 如果后台系统返回的是 { data: {...} }，则取出 data
+			// 如果直接返回用户数据，则直接使用
+			const userData = responseData.data || responseData;
+			return {
+				success: true,
+				data: userData,
+			};
+		} catch (error) {
+			if (error instanceof AuthError) {
+				throw error;
+			}
+			throw new AuthError(`Failed to verify token with backend system: ${error.message}`);
+		}
+	}
+
+	/**
+	 * 模拟后台系统的 Token 验证接口 - 仅用于开发测试
+	 *
+	 * 访问路径：POST /rest/external-auth/mock-sirius-token-verify
+	 *
+	 * 模拟后台系统接口：/gx/sirius/api/v2/users/meta/desc/token
+	 * 测试数据：token=123, userId=456, userName=789 返回成功，其他返回失败
+	 */
+	@Post('/mock-sirius-token-verify', { skipAuth: true })
+	async mockSiriusTokenVerify(req: AuthlessRequest, _res: Response) {
+		const payload = req.body as { token?: string };
+		const { token } = payload;
+
+		// 模拟验证逻辑：只有 token=123 才返回成功
+		if (token === '123') {
+			// 直接返回用户数据（verify-backend-token 会包装成 { success: true, data: 用户数据 }）
+			return {
+				id: '456',
+				user_name: '789',
+				real_name: '测试用户789',
+				email: '789@test.com',
+				department: '测试部门',
+				phone: '13800138000',
+			};
+		} else {
+			// 模拟 401 未授权错误
+			_res.status(401);
+			return {
+				message: 'Invalid token',
+			};
+		}
+	}
+
+	/**
 	 * 设置用户权限接口 - 更新用户的全局角色和项目角色
 	 *
 	 * 支持的操作：
@@ -396,8 +495,6 @@ export class ExternalAuthController {
 
 			// 更新用户的全局角色
 			await this.userRepository.update({ id: user.id }, { role: { slug: globalRole } });
-
-			this.logger.info(`Updated global role for user ${user.email} to ${globalRole}`);
 		}
 
 		// 7. 验证并更新项目角色
@@ -455,10 +552,6 @@ export class ExternalAuthController {
 				await this.projectRelationRepository.update(
 					{ projectId, userId: user.id },
 					{ role: { slug: role } },
-				);
-
-				this.logger.info(
-					`Updated project role for user ${user.email} in project ${projectId} to ${role}`,
 				);
 			}
 		}
