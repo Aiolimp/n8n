@@ -353,14 +353,14 @@ export class ExternalAuthController {
 			const baseUrl = `http://localhost:${process.env.N8N_PORT || 5678}`;
 			verifyUrl = `${baseUrl}/rest/external-auth/mock-sirius-token-verify`;
 		} else {
-			// 生产模式：优先使用环境变量，如果没有配置则使用浏览器访问的 IP 地址
+			// 生产模式：优先使用环境变量，如果没有配置则使用浏览器访问的地址（ip+port）
 			let backendSystemUrl = process.env.BACKEND_SYSTEM_URL;
 			if (!backendSystemUrl) {
 				// 从请求头中获取浏览器访问的主机名（不含端口）
 				const hostname = req.hostname || req.get('host')?.split(':')[0] || 'localhost';
 				backendSystemUrl = `http://${hostname}`;
 			}
-			verifyUrl = `${backendSystemUrl}/gx/sirius/api/v2/users/meta/desc/token`;
+			verifyUrl = `${backendSystemUrl}/sirius/api/v2/users/meta/desc/token`;
 		}
 
 		try {
