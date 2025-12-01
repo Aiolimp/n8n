@@ -436,11 +436,11 @@ async function onUpdateMfaEnforced(value: string | number | boolean) {
 							<ElSwitch :model-value="settingsStore.isMFAEnforced" size="large" :disabled="true" />
 							<template #content>
 								<I18nT :keypath="tooltipKey" tag="span" scope="global">
-									<template #action>
+									<!-- <template #action>
 										<a @click="goToUpgrade">
 											{{ i18n.baseText('settings.personal.mfa.enforce.unlicensed_tooltip.link') }}
 										</a>
-									</template>
+									</template> -->
 								</I18nT>
 							</template>
 						</N8nTooltip>

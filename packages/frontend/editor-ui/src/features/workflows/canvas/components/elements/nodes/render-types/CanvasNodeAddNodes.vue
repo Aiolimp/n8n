@@ -89,7 +89,7 @@ async function onClickTemplatesLink() {
 		</N8nTooltip>
 		<p :class="$style.label">
 			{{ i18n.baseText('nodeView.canvasAddButton.addFirstStep') }}
-			<N8nLink
+			<!-- <N8nLink
 				v-if="templatesLinkEnabled"
 				:underline="true"
 				size="small"
@@ -97,7 +97,7 @@ async function onClickTemplatesLink() {
 				@click="onClickTemplatesLink"
 			>
 				{{ i18n.baseText('nodeView.templateLink') }}
-			</N8nLink>
+			</N8nLink> -->
 		</p>
 	</div>
 </template>

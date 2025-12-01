@@ -44,9 +44,9 @@ const visible = computed(() =>
 					<N8nText size="small" tag="p">
 						{{ locale.baseText('ndv.pinData.pin.description') }}
 
-						<N8nLink :to="props.dataPinningDocsUrl" size="small">
+						<!-- <N8nLink :to="props.dataPinningDocsUrl" size="small">
 							{{ locale.baseText('ndv.pinData.pin.link') }}
-						</N8nLink>
+						</N8nLink> -->
 					</N8nText>
 				</div>
 			</div>

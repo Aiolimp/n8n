@@ -347,7 +347,7 @@ export const useUIStore = defineStore(STORES.UI, () => {
 						title: `contextual.workflows.sharing.unavailable.title${contextKey}`,
 						description: {
 							modal: `contextual.workflows.sharing.unavailable.description.modal${contextKey}`,
-							tooltip: `contextual.workflows.sharing.unavailable.description.tooltip${contextKey}`,
+							// tooltip: `contextual.workflows.sharing.unavailable.description.tooltip${contextKey}`,
 						},
 						action: `contextual.workflows.sharing.unavailable.action${contextKey}`,
 						button: `contextual.workflows.sharing.unavailable.button${contextKey}`,

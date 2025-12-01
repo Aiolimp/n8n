@@ -191,9 +191,10 @@ export function AIView(_nodes: SimplifiedNodeType[]): NodeView {
 	const aiTransformNode = nodeTypesStore.getNodeType(AI_TRANSFORM_NODE_TYPE);
 	const transformNode = askAiEnabled && aiTransformNode ? [getNodeView(aiTransformNode)] : [];
 
-	const callouts: NodeViewItem[] = !calloutHelpers.isPreBuiltAgentsCalloutVisible.value
-		? [getAiTemplatesCallout(aiTemplatesURL)]
-		: [getPreBuiltAgentsCalloutWithDivider()];
+	const callouts: NodeViewItem[] = [];
+	// const callouts: NodeViewItem[] = !calloutHelpers.isPreBuiltAgentsCalloutVisible.value
+	// 	? [getAiTemplatesCallout(aiTemplatesURL)]
+	// 	: [getPreBuiltAgentsCalloutWithDivider()];
 
 	return {
 		value: AI_NODE_CREATOR_VIEW,

@@ -156,7 +156,7 @@ function onDocumentationUrlClick(): void {
 		<div v-if="showRequiredErrors" :class="$style.errors">
 			<N8nText color="danger" size="small">
 				{{ i18n.baseText('parameterInputExpanded.thisFieldIsRequired') }}
-				<N8nLink
+				<!-- <N8nLink
 					v-if="documentationUrl"
 					:to="documentationUrl"
 					size="small"
@@ -164,7 +164,7 @@ function onDocumentationUrlClick(): void {
 					@click="onDocumentationUrlClick"
 				>
 					{{ i18n.baseText('parameterInputExpanded.openDocs') }}
-				</N8nLink>
+				</N8nLink> -->
 			</N8nText>
 		</div>
 	</N8nInputLabel>

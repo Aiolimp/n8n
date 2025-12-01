@@ -307,14 +307,14 @@ watch(showOAuthSuccessBanner, (newValue, oldValue) => {
 			/>
 
 			<template v-if="credentialPermissions.update">
-				<N8nNotice v-if="documentationUrl && credentialProperties.length" theme="warning">
+				<!-- <N8nNotice v-if="documentationUrl && credentialProperties.length" theme="warning">
 					{{ i18n.baseText('credentialEdit.credentialConfig.needHelpFillingOutTheseFields') }}
 					<span class="ml-4xs">
 						<N8nLink :to="documentationUrl" size="small" bold @click="onDocumentationUrlClick">
 							{{ i18n.baseText('credentialEdit.credentialConfig.openDocs') }}
 						</N8nLink>
 					</span>
-				</N8nNotice>
+				</N8nNotice> -->
 
 				<AuthTypeSelector
 					v-if="showAuthTypeSelector && isNewCredential"
@@ -389,12 +389,12 @@ watch(showOAuthSuccessBanner, (newValue, oldValue) => {
 
 			<EnterpriseEdition :features="[EnterpriseEditionFeature.ExternalSecrets]">
 				<template #fallback>
-					<N8nInfoTip class="mt-s">
+					<!-- <N8nInfoTip class="mt-s">
 						{{ i18n.baseText('credentialEdit.credentialConfig.externalSecrets') }}
 						<N8nLink bold :to="i18n.baseText('settings.externalSecrets.docs')" size="small">
 							{{ i18n.baseText('credentialEdit.credentialConfig.externalSecrets.moreInfo') }}
 						</N8nLink>
-					</N8nInfoTip>
+					</N8nInfoTip> -->
 				</template>
 			</EnterpriseEdition>
 		</div>

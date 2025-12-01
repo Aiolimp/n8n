@@ -45,9 +45,9 @@ const workflowHistoryRoute = computed<{ name: string; params: { workflowId: stri
 			}}</span>
 			<I18nT v-else keypath="workflowHistory.button.tooltip.disabled" scope="global">
 				<template #link>
-					<N8nLink size="small" @click="emit('upgrade')">
+					<!-- <N8nLink size="small" @click="emit('upgrade')">
 						{{ locale.baseText('workflowHistory.button.tooltip.disabled.link') }}
-					</N8nLink>
+					</N8nLink> -->
 				</template>
 			</I18nT>
 		</template>
