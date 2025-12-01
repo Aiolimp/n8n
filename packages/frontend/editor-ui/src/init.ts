@@ -237,7 +237,7 @@ function registerAuthenticationHooks() {
 		void bannersStore.loadDynamicBanners();
 
 		// 启动后台系统 token 轮询验证（如果存在 token）
-		const backendToken = sessionStorage.getItem('backend_token');
+		const backendToken = localStorage.getItem('backend_token');
 		if (backendToken) {
 			const { useBackendTokenValidation } = await import(
 				'@/app/composables/useBackendTokenValidation'
@@ -255,6 +255,6 @@ function registerAuthenticationHooks() {
 		telemetry.reset();
 		RBACStore.setGlobalScopes([]);
 		// 清除后台系统 token
-		sessionStorage.removeItem('backend_token');
+		localStorage.removeItem('backend_token');
 	});
 }

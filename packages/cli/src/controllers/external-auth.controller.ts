@@ -7,6 +7,8 @@ import {
 } from '@n8n/db';
 import { Post, RestController } from '@n8n/decorators';
 import { PROJECT_OWNER_ROLE_SLUG } from '@n8n/permissions';
+import { GlobalConfig } from '@n8n/config';
+import { Logger } from '@n8n/backend-common';
 import { Response } from 'express';
 
 import { AuthService } from '@/auth/auth.service';
@@ -21,6 +23,9 @@ import { NotFoundError } from '@/errors/response-errors/not-found.error';
  */
 @RestController('/external-auth')
 export class ExternalAuthController {
+	// Token 验证缓存 (token -> 验证结果) - 5分钟过期
+	private tokenCache = new Map<string, { data: any; expireAt: number }>();
+
 	constructor(
 		private readonly userRepository: UserRepository,
 		private readonly roleRepository: RoleRepository,
@@ -28,22 +33,48 @@ export class ExternalAuthController {
 		private readonly projectRelationRepository: ProjectRelationRepository,
 		private readonly authService: AuthService,
 		private readonly passwordUtility: PasswordUtility,
-	) {}
+		private readonly globalConfig: GlobalConfig,
+		private readonly logger: Logger,
+	) {
+		this.logger.info('ExternalAuthController 初始化', {
+			useMockBackend: this.globalConfig.externalAuth.useMockBackend,
+			hasSecret: !!this.globalConfig.externalAuth.secret,
+		});
+	}
 
 	/**
 	 * 外部系统登录接口 - 通过 userId 查找用户并签发 JWT Cookie
 	 */
 	@Post('/login', { skipAuth: true })
 	async externalLogin(req: AuthlessRequest, res: Response) {
-		// 1. 获取请求参数：用户标识符和认证密钥
-		const payload = req.body as { userIdentifier?: string; authSecret?: string };
-		const { userIdentifier, authSecret } = payload;
+		// 1. 获取请求参数：用户标识符和 token
+		const payload = req.body as {
+			userIdentifier?: string;
+			token?: string; // 使用 backend token 验证
+		};
+		const { userIdentifier, token: backendToken } = payload;
 
-		// 2. 验证认证密钥
-		const expectedSecret = process.env.N8N_EXTERNAL_AUTH_SECRET || 'n8n-secret-key-2025';
-		if (authSecret !== expectedSecret) {
-			throw new AuthError('Invalid auth secret');
+		// 2. 验证 token (使用缓存避免重复验证)
+		if (!backendToken) {
+			throw new BadRequestError('token is required');
 		}
+
+		// 检查缓存
+		const cached = this.tokenCache.get(backendToken);
+		if (!cached || cached.expireAt < Date.now()) {
+			// 缓存不存在或已过期,需要验证
+			try {
+				const result = await this.verifyBackendToken(req, res);
+				// 缓存验证结果 5分钟
+				this.tokenCache.set(backendToken, {
+					data: result,
+					expireAt: Date.now() + 5 * 60 * 1000,
+				});
+			} catch (error) {
+				throw new AuthError('Invalid token');
+			}
+		}
+		// 使用缓存,不再重复验证
 
 		// 3. 检查用户标识符是否存在
 		if (!userIdentifier) {
@@ -97,20 +128,36 @@ export class ExternalAuthController {
 	 */
 	@Post('/create-user', { skipAuth: true })
 	async createExternalUser(req: AuthlessRequest, _res: Response) {
-		// 1. 获取请求参数：用户ID、姓名和认证密钥
+		// 1. 获取请求参数：用户ID、姓名和 token
 		const payload = req.body as {
 			userId?: string;
 			firstName?: string;
 			lastName?: string;
-			authSecret?: string;
+			token?: string; // 使用 backend token 验证
 		};
-		const { userId, firstName, lastName, authSecret } = payload;
+		const { userId, firstName, lastName, token: backendToken } = payload;
 
-		// 2. 验证认证密钥
-		const expectedSecret = process.env.N8N_EXTERNAL_AUTH_SECRET || 'n8n-secret-key-2025';
-		if (authSecret !== expectedSecret) {
-			throw new AuthError('Invalid auth secret');
+		// 2. 验证 token (使用缓存避免重复验证)
+		if (!backendToken) {
+			throw new BadRequestError('token is required');
 		}
+
+		// 检查缓存
+		const cached = this.tokenCache.get(backendToken);
+		if (!cached || cached.expireAt < Date.now()) {
+			// 缓存不存在或已过期,需要验证
+			try {
+				const result = await this.verifyBackendToken(req, _res);
+				// 缓存验证结果 5分钟
+				this.tokenCache.set(backendToken, {
+					data: result,
+					expireAt: Date.now() + 5 * 60 * 1000,
+				});
+			} catch (error) {
+				throw new AuthError('Invalid token');
+			}
+		}
+		// 使用缓存,不再重复验证
 
 		// 3. 检查 userId 是否存在
 		if (!userId) {
@@ -217,7 +264,7 @@ export class ExternalAuthController {
 		const { userId, authSecret } = payload;
 
 		// 2. 验证认证密钥
-		const expectedSecret = process.env.N8N_EXTERNAL_AUTH_SECRET || 'n8n-secret-key-2025';
+		const expectedSecret = this.globalConfig.externalAuth.secret;
 		if (authSecret !== expectedSecret) {
 			throw new AuthError('Invalid auth secret');
 		}
@@ -277,7 +324,7 @@ export class ExternalAuthController {
 		const { userId, authSecret } = payload;
 
 		// 2. 验证认证密钥
-		const expectedSecret = process.env.N8N_EXTERNAL_AUTH_SECRET || 'n8n-secret-key-2025';
+		const expectedSecret = this.globalConfig.externalAuth.secret;
 		if (authSecret !== expectedSecret) {
 			throw new AuthError('Invalid auth secret');
 		}
@@ -339,7 +386,6 @@ export class ExternalAuthController {
 		// 1. 获取请求参数：token
 		const payload = req.body as { token?: string };
 		const { token } = payload;
-
 		// 2. 检查 token 是否存在
 		if (!token) {
 			throw new BadRequestError('token is required');
@@ -348,21 +394,17 @@ export class ExternalAuthController {
 		// 3. 调用后台系统的 token 验证接口
 		// 测试模式：如果设置了 USE_MOCK_BACKEND=true，则使用本地模拟接口
 		let verifyUrl: string;
-		if (process.env.USE_MOCK_BACKEND === 'true') {
-			// 使用本地模拟接口
-			const baseUrl = `http://localhost:${process.env.N8N_PORT || 5678}`;
+		if (this.globalConfig.externalAuth.useMockBackend) {
+			const baseUrl = `http://localhost:${this.globalConfig.port}`;
 			verifyUrl = `${baseUrl}/rest/external-auth/mock-sirius-token-verify`;
+			this.logger.info(`URL: ${verifyUrl}`);
 		} else {
-			// 生产模式：优先使用环境变量，如果没有配置则使用浏览器访问的地址（ip+port）
-			let backendSystemUrl = process.env.BACKEND_SYSTEM_URL;
-			if (!backendSystemUrl) {
-				// 从请求头中获取浏览器访问的主机名（不含端口）
-				const hostname = req.hostname || req.get('host')?.split(':')[0] || 'localhost';
-				backendSystemUrl = `http://${hostname}`;
-			}
+			// 从请求头中获取浏览器访问的主机名（不含端口）
+			const hostname = req.hostname || req.get('host')?.split(':')[0] || 'localhost';
+			const backendSystemUrl = `http://${hostname}`;
 			verifyUrl = `${backendSystemUrl}/sirius/api/v2/users/meta/desc/token`;
+			this.logger.info(` backendSystemUrl: ${backendSystemUrl}, verifyUrl: ${verifyUrl}`);
 		}
-
 		try {
 			const response = await fetch(verifyUrl, {
 				method: 'POST',
@@ -375,12 +417,7 @@ export class ExternalAuthController {
 			if (!response.ok) {
 				throw new AuthError(`Backend system verification failed: ${response.statusText}`);
 			}
-
 			const responseData = await response.json();
-
-			// 4. 返回后台系统的验证结果
-			// 如果后台系统返回的是 { data: {...} }，则取出 data
-			// 如果直接返回用户数据，则直接使用
 			const userData = responseData.data || responseData;
 			return {
 				success: true,
@@ -400,7 +437,7 @@ export class ExternalAuthController {
 	 * 访问路径：POST /rest/external-auth/mock-sirius-token-verify
 	 *
 	 * 模拟后台系统接口：/gx/sirius/api/v2/users/meta/desc/token
-	 * 测试数据：token=123, userId=456, userName=789 返回成功，其他返回失败
+	 * 测试数据：http://localhost:5678/signin?userId=456&userName=789&token=123
 	 */
 	@Post('/mock-sirius-token-verify', { skipAuth: true })
 	async mockSiriusTokenVerify(req: AuthlessRequest, _res: Response) {
@@ -451,7 +488,7 @@ export class ExternalAuthController {
 		const { userId, authSecret, globalRole, projectPermissions } = payload;
 
 		// 2. 验证认证密钥
-		const expectedSecret = process.env.N8N_EXTERNAL_AUTH_SECRET || 'n8n-secret-key-2025';
+		const expectedSecret = this.globalConfig.externalAuth.secret;
 		if (authSecret !== expectedSecret) {
 			throw new AuthError('Invalid auth secret');
 		}

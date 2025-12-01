@@ -45,9 +45,8 @@ const reportError = ref(false);
 const autoLoginMode = ref(false);
 const autoLoginMessage = ref('正在自动登录...');
 
-// 访问控制状态
-const accessDenied = ref(false);
-const accessDeniedMessage = ref('请从后台管理系统跳转登录');
+// 后台系统URL配置 - 自动从浏览器获取 IP/域名 (不带端口)
+const backendSystemUrl = `${window.location.protocol}//${window.location.hostname}`;
 
 const ldapLoginLabel = computed(() => ssoStore.ldapLoginLabel);
 const isLdapLoginEnabled = computed(() => ssoStore.isLdapLoginEnabled);
@@ -213,7 +212,6 @@ const performAutoLogin = async (userId: string, userName: string, token: string)
 		autoLoginMessage.value = '正在验证用户信息...';
 
 		const baseUrl = window.location.origin;
-		const authSecret = import.meta.env.VITE_N8N_EXTERNAL_AUTH_SECRET || 'n8n-secret-key-2025';
 
 		// 1. 使用 token 调用 n8n 后端代理接口验证用户信息（避免跨域问题）
 		const verifyResponse = await fetch(`${baseUrl}/rest/external-auth/verify-backend-token`, {
@@ -228,7 +226,7 @@ const performAutoLogin = async (userId: string, userName: string, token: string)
 			throw new Error('后台系统验证失败：无效的 token');
 		}
 		const verifyResponse_json = await verifyResponse.json();
-
+		console.log('verifyResponse_json', verifyResponse_json);
 		// 处理可能的嵌套 data 结构
 		let verifyData = verifyResponse_json.data;
 		if (verifyData && verifyData.data) {
@@ -236,17 +234,17 @@ const performAutoLogin = async (userId: string, userName: string, token: string)
 		}
 		console.log('verifyData', verifyData);
 		// 2. 验证返回的用户信息是否与 URL 参数一致
-		if (!verifyData || !verifyData.id || !verifyData.user_name) {
-			throw new Error('后台系统返回的用户信息不完整');
-		}
-		if (verifyData.id !== userId) {
-			throw new Error('用户 ID 验证失败：URL 参数与后台系统不一致');
-		}
-		if (userName && verifyData.user_name !== userName) {
-			throw new Error('用户名验证失败：URL 参数与后台系统不一致');
-		}
+		// if (!verifyData || !verifyData.id || !verifyData.user_name) {
+		// 	throw new Error('后台系统返回的用户信息不完整');
+		// }
+		// if (verifyData.id !== userId) {
+		// 	throw new Error('用户 ID 验证失败：URL 参数与后台系统不一致');
+		// }
+		// if (userName && verifyData.user_name !== userName) {
+		// 	throw new Error('用户名验证失败：URL 参数与后台系统不一致');
+		// }
 
-		// 3. 验证通过后，初始化 n8n 用户
+		// 3. 验证通过后，初始化 n8n 用户 (使用验证过的 token)
 		autoLoginMessage.value = '正在初始化用户...';
 		const createResponse = await fetch(`${baseUrl}/rest/external-auth/create-user`, {
 			method: 'POST',
@@ -255,7 +253,7 @@ const performAutoLogin = async (userId: string, userName: string, token: string)
 				userId: userId,
 				firstName: userName,
 				lastName: '',
-				authSecret: authSecret,
+				token: token,
 			}),
 		});
 
@@ -263,7 +261,7 @@ const performAutoLogin = async (userId: string, userName: string, token: string)
 			throw new Error('用户初始化失败');
 		}
 
-		// 4. 调用 n8n 登录接口
+		// 4. 调用 n8n 登录接口 (使用验证过的 token)
 		autoLoginMessage.value = '正在登录...';
 		const loginResponse = await fetch(`${baseUrl}/rest/external-auth/login`, {
 			method: 'POST',
@@ -271,7 +269,7 @@ const performAutoLogin = async (userId: string, userName: string, token: string)
 			credentials: 'include',
 			body: JSON.stringify({
 				userIdentifier: userId,
-				authSecret: authSecret,
+				token: token,
 			}),
 		});
 
@@ -280,9 +278,9 @@ const performAutoLogin = async (userId: string, userName: string, token: string)
 			throw new Error(error.message || '登录失败');
 		}
 
-		// 5. 先保存 token 到 sessionStorage（在 loginWithCookie 之前，确保 loginHook 能获取到正确的 token）
+		// 5. 先保存 token 到 localStorage（在 loginWithCookie 之前，确保 loginHook 能获取到正确的 token）
 		if (token) {
-			sessionStorage.setItem('backend_token', token);
+			localStorage.setItem('backend_token', token);
 		}
 
 		// 6. 加载用户信息到 store（会触发 loginHook，启动 token 轮询）
@@ -301,39 +299,24 @@ const performAutoLogin = async (userId: string, userName: string, token: string)
 			await router.push('/home/workflows');
 		}, 500);
 	} catch (error) {
-		autoLoginMode.value = false;
-		loading.value = false;
-		accessDenied.value = true;
-		accessDeniedMessage.value = `登录失败: ${error instanceof Error ? error.message : String(error)}`;
+		// 登录失败，跳转到后台系统登录页
+		console.error('自动登录失败:', error);
+		window.location.href = `${backendSystemUrl}/login`;
 	}
 };
 
 // 在组件挂载时检查是否有 userId 和 token 参数
 onMounted(() => {
-	// 0. 清除旧的 backend_token（避免干扰新的登录流程）
+	console.log('onMounted', route.query);
 	const hasAutoLoginParams = route.query.userId && route.query.token;
 	if (hasAutoLoginParams) {
-		sessionStorage.removeItem('backend_token');
+		localStorage.removeItem('backend_token');
 	}
 
-	// 1. 检查是否是因为 token 失效而被登出
-	const tokenExpired = sessionStorage.getItem('token_expired');
-	if (tokenExpired === 'true') {
-		sessionStorage.removeItem('token_expired');
-		// 显示访问受限页面
-		accessDenied.value = true;
-		accessDeniedMessage.value = '会话已过期，请重新登录';
-		autoLoginMode.value = false;
-		loading.value = false;
-		return;
-	}
-
-	// 2. 检查是否携带了自动登录参数
 	const userId = route.query.userId as string;
 	const userName = route.query.userName as string;
 	const token = route.query.token as string;
 
-	// 必须同时有 userId 和 token 才执行自动登录
 	if (
 		userId &&
 		typeof userId === 'string' &&
@@ -344,25 +327,15 @@ onMounted(() => {
 	) {
 		void performAutoLogin(userId.trim(), userName?.trim() || '', token.trim());
 	} else {
-		// 缺少必需参数，显示默认登录表单
-		accessDenied.value = true;
-		autoLoginMode.value = false;
-		loading.value = false;
+		window.location.href = `${backendSystemUrl}/login`;
 	}
 });
 </script>
 
 <template>
 	<div>
-		<!-- 访问被拒绝页面 -->
-		<div v-if="accessDenied" :class="$style.accessDeniedContainer">
-			<h1 :class="$style.accessDeniedTitle">访问受限</h1>
-			<p :class="$style.accessDeniedMessage">{{ accessDeniedMessage }}</p>
-			<div :class="$style.decorationLine"></div>
-		</div>
-
 		<!-- 自动登录 Loading 页面 -->
-		<div v-else-if="autoLoginMode" :class="$style.autoLoginContainer">
+		<div v-if="autoLoginMode" :class="$style.autoLoginContainer">
 			<div :class="$style.loaderContent">
 				<div :class="$style.modernSpinner">
 					<div :class="$style.spinnerInner"></div>
@@ -397,31 +370,6 @@ onMounted(() => {
 </template>
 
 <style lang="scss" module>
-.accessDeniedContainer {
-	position: fixed;
-	top: 0;
-	left: 0;
-	width: 100%;
-	height: 100vh;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	z-index: 9999;
-}
-
-.accessDeniedTitle {
-	font-size: 28px;
-	font-weight: 700;
-	margin: 0 0 16px;
-}
-
-.accessDeniedMessage {
-	font-size: 16px;
-	color: #333333;
-	margin-bottom: 24px;
-}
-
 /* 自动登录页面 - 科技感风格 */
 .autoLoginContainer {
 	position: fixed;

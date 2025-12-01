@@ -14,6 +14,7 @@ import { DynamicBannersConfig } from './configs/dynamic-banners.config';
 import { EndpointsConfig } from './configs/endpoints.config';
 import { EventBusConfig } from './configs/event-bus.config';
 import { ExecutionsConfig } from './configs/executions.config';
+import { ExternalAuthConfig } from './configs/external-auth.config';
 import { ExternalHooksConfig } from './configs/external-hooks.config';
 import { GenericConfig } from './configs/generic.config';
 import { HiringBannerConfig } from './configs/hiring-banner.config';
@@ -55,6 +56,7 @@ export { HiringBannerConfig } from './configs/hiring-banner.config';
 export { PersonalizationConfig } from './configs/personalization.config';
 export { NodesConfig } from './configs/nodes.config';
 export { CronLoggingConfig } from './configs/logging.config';
+export { ExternalAuthConfig } from './configs/external-auth.config';
 
 const protocolSchema = z.enum(['http', 'https']);
 
@@ -180,6 +182,9 @@ export class GlobalConfig {
 
 	@Nested
 	sso: SsoConfig;
+
+	@Nested
+	externalAuth: ExternalAuthConfig;
 
 	/** Default locale for the UI. */
 	@Env('N8N_DEFAULT_LOCALE')
